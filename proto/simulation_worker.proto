@@ -1,0 +1,108 @@
+syntax = "proto3";
+
+package simulation;
+
+option go_package = "depin-backend/pkg/pb";
+
+service SimulationWorkerService {
+  // Worker'ın sürekli ayakta olduğunu ve donanım durumunu bildirdiği çağrı
+  rpc SendHeartbeat (HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Çift yönlü akış (Bi-directional Stream): İş dağıtımı, anlık durum ve backend'den gelecek ABORT sinyalleri için
+  rpc StreamJobChannel (stream WorkerSignal) returns (stream BackendSignal);
+}
+
+// Rust Spot-Checking Service (Validator Engine)
+service ValidatorService {
+  rpc ValidateJob (ValidationRequest) returns (ValidationResponse);
+}
+
+message ValidationRequest {
+  string job_id = 1;
+  bytes result_a_pdbqt = 2;
+  double result_a_energy = 3;
+  bytes result_b_pdbqt = 4;
+  double result_b_energy = 5;
+}
+
+message ValidationResponse {
+  bool is_valid = 1;
+  string message = 2;
+}
+
+// --- Hata Yönetimi ---
+enum WorkerErrorCode {
+  SUCCESS = 0;
+  ERR_UNKNOWN = 1;
+  ERR_THERMAL_LIMIT = 2;     // Cihaz aşırı ısındı
+  ERR_HARDWARE_FAULT = 3;    // CUDA/Driver hatası, GPU çöktü
+  ERR_USER_INTERRUPT = 4;    // Bilgisayar sahibi simülasyonu manuel kapattı
+  ERR_OUT_OF_VRAM = 5;       // Molekül/Protein boyutu VRAM'i aştı
+  ERR_DOWNLOAD_FAILED = 6;   // PDB veya SMILES girdi dosyaları indirilemedi
+}
+
+// --- Canlılık Takibi (Heartbeat) ---
+message HeartbeatRequest {
+  string worker_id = 1;
+  string api_key = 2;
+  float gpu_temperature = 3; // Santigrat derece
+  float fan_speed = 4;       // Yüzde (%)
+  uint64 available_vram = 5; // Byte cinsinden
+  double current_flops = 6;  // Anlık hesaplama gücü
+  bool is_busy = 7;          // Worker o an iş işliyor mu?
+}
+
+message RewardNotification {
+  string job_id = 1;
+  double net_amount = 2;
+  double new_confirmed_balance = 3;
+  string status = 4; // "CONFIRMED" veya "PENDING_SPOT_CHECK"
+}
+
+message HeartbeatResponse {
+  bool status = 1;
+  string command = 2;        // "COOL_DOWN" veya "PROCEED"
+  repeated RewardNotification recent_rewards = 3; 
+}
+
+// --- İş Dağıtımı ve Sinyalleşme ---
+message WorkerSignal {
+  string worker_id = 1;
+  oneof payload {
+    WorkerProgress progress = 2;
+    JobResult result = 3;
+  }
+}
+
+message WorkerProgress {
+  string job_id = 1;
+  float completion_percentage = 2;
+  float current_energy_score = 3;
+}
+
+message JobResult {
+  string job_id = 1;
+  WorkerErrorCode error_code = 2;
+  string error_message = 3;
+  bytes output_pdbqt_data = 4; // Hesaplanan 3D koordinat çıktısı
+  double binding_energy = 5;   // En düşük serbest bağlanma enerjisi (kcal/mol)
+}
+
+message BackendSignal {
+  oneof command {
+    JobAssignment job_assignment = 1;
+    AbortSignal abort_signal = 2;
+  }
+}
+
+message JobAssignment {
+  string job_id = 1;
+  string smiles_string = 2;
+  string target_pdb_url = 3;
+  int32 max_exhaustiveness = 4; // Autodock Vina hassasiyet parametresi
+}
+
+message AbortSignal {
+  string job_id = 1;
+  string reason = 2; // "USER_CANCELLED" veya "SPOT_CHECK_FAILED"
+}

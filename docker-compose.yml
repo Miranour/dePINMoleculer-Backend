@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: depin-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: depin_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - depin-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: depin-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --notify-keyspace-events Ex
+    volumes:
+      - redis_data:/data
+    networks:
+      - depin-network
+
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: depin-rabbitmq
+    ports:
+      - "5672:5672"      # AMQP protocol
+      - "15672:15672"    # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - depin-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+
+networks:
+  depin-network:
+    driver: bridge

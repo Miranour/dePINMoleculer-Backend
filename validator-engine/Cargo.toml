@@ -1,0 +1,13 @@
+[package]
+name = "validator-engine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tonic = "0.10"
+prost = "0.12"
+dotenvy = "0.15"
+
+[build-dependencies]
+tonic-build = "0.10"
