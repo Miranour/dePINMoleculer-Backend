@@ -1,0 +1,17 @@
+FROM rust:slim-bookworm as builder
+
+RUN apt-get update && apt-get install -y protobuf-compiler libprotobuf-dev
+
+WORKDIR /app
+COPY . .
+
+WORKDIR /app/validator-engine
+RUN rustup target add x86_64-unknown-linux-gnu
+RUN cargo build --release --target x86_64-unknown-linux-gnu
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=builder /app/validator-engine/target/x86_64-unknown-linux-gnu/release/validator-engine /usr/local/bin/
+
+CMD ["validator-engine"]

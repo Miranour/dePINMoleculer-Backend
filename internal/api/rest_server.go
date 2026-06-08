@@ -43,6 +43,12 @@ func (s *RESTServer) Run(addr string) error {
 func (s *RESTServer) setupRoutes() {
 	v1 := s.router.Group("/api/v1")
 
+	// --- WEB AUTH ENDPOINTS ---
+	webAuth := v1.Group("/auth")
+	{
+		webAuth.POST("/login", s.webLogin)
+	}
+
 	// --- RESEARCHER ENDPOINTS ---
 	researcher := v1.Group("/jobs")
 	researcher.Use(AuthMiddleware("researcher"))
@@ -112,6 +118,47 @@ func (s *RESTServer) createJob(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"job_id": jobID, "status": "QUEUED"})
+}
+
+// --- WEB AUTH HANDLERS ---
+func (s *RESTServer) webLogin(c *gin.Context) {
+	type loginReq struct {
+		Email    string `json:"email" binding:"required"`
+		Password string `json:"password" binding:"required"`
+	}
+	var req loginReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var role string
+	var userID string
+	var name string
+
+	if req.Email == "admin@depin.com" && req.Password == "admin123" {
+		role = "admin"
+		userID = "1"
+		name = "Admin User"
+	} else if req.Email == "user@depin.com" && req.Password == "user123" {
+		role = "researcher"
+		userID = "2"
+		name = "Researcher User"
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Geçersiz e-posta veya şifre"})
+		return
+	}
+
+	token, _ := GenerateToken(userID, role)
+	c.JSON(http.StatusOK, gin.H{
+		"token": token,
+		"user": gin.H{
+			"id":    userID,
+			"email": req.Email,
+			"role":  role,
+			"name":  name,
+		},
+	})
 }
 
 func (s *RESTServer) abortJob(c *gin.Context) {

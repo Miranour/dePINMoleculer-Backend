@@ -40,6 +40,43 @@ services:
     networks:
       - depin-network
 
+  validator-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.validator
+    container_name: depin-validator
+    ports:
+      - "50052:50052"
+    environment:
+      - REDIS_URL=redis://depin-redis:6379
+      - SERVER_PORT=50052
+    depends_on:
+      - redis
+    networks:
+      - depin-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: depin-backend
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    environment:
+      - POSTGRES_URL=postgres://postgres:postgrespassword@depin-postgres:5432/depin_db?sslmode=disable
+      - REDIS_URL=depin-redis:6379
+      - RABBITMQ_URL=amqp://guest:guest@depin-rabbitmq:5672/
+      - VALIDATOR_ADDR=depin-validator:50052
+      - JWT_SECRET=super_secret_key_change_me_in_production
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+      - validator-engine
+    networks:
+      - depin-network
+
 volumes:
   postgres_data:
   redis_data:
