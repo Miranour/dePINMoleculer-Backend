@@ -20,16 +20,21 @@ type RESTServer struct {
 	walletRepo   *repository.WalletRepository
 	jobPublisher *service.JobPublisher
 	redisClient  *redis.Client
+	authService  *service.AuthService
 }
 
-func NewRESTServer(walletRepo *repository.WalletRepository, jobPublisher *service.JobPublisher, redisClient *redis.Client) *RESTServer {
+func NewRESTServer(walletRepo *repository.WalletRepository, jobPublisher *service.JobPublisher, redisClient *redis.Client, authService *service.AuthService) *RESTServer {
 	r := gin.Default()
+	
+	// Add CORS middleware
+	r.Use(CORSMiddleware())
 	
 	server := &RESTServer{
 		router:       r,
 		walletRepo:   walletRepo,
 		jobPublisher: jobPublisher,
 		redisClient:  redisClient,
+		authService:  authService,
 	}
 
 	server.setupRoutes()
@@ -46,12 +51,26 @@ func (s *RESTServer) setupRoutes() {
 	// --- WEB AUTH ENDPOINTS ---
 	webAuth := v1.Group("/auth")
 	{
+		webAuth.POST("/register", s.webRegister)
 		webAuth.POST("/login", s.webLogin)
+		webAuth.POST("/google", s.googleLogin)
+		webAuth.POST("/orcid/callback", s.orcidCallback)
+	}
+
+	// --- VERIFICATION ENDPOINTS ---
+	verification := v1.Group("/verification")
+	// Use a generic middleware or assume researcher for now
+	verification.Use(AuthMiddleware("researcher"))
+	{
+		verification.POST("/start", s.startVerification)
+		verification.GET("/status", s.verificationStatus)
+		verification.POST("/verify", s.completeVerification)
 	}
 
 	// --- RESEARCHER ENDPOINTS ---
 	researcher := v1.Group("/jobs")
 	researcher.Use(AuthMiddleware("researcher"))
+	researcher.Use(VerifiedMiddleware())
 	{
 		researcher.POST("", s.createJob)
 		researcher.POST("/:id/abort", s.abortJob)
@@ -121,6 +140,35 @@ func (s *RESTServer) createJob(c *gin.Context) {
 }
 
 // --- WEB AUTH HANDLERS ---
+func (s *RESTServer) webRegister(c *gin.Context) {
+	type registerReq struct {
+		Email    string `json:"email" binding:"required,email"`
+		Password string `json:"password" binding:"required,min=6"`
+	}
+	var req registerReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	user, err := s.authService.RegisterEmailUser(c.Request.Context(), req.Email, req.Password)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	token, _ := GenerateToken(user.ID, user.Role, user.IsVerified)
+	c.JSON(http.StatusCreated, gin.H{
+		"token": token,
+		"user": gin.H{
+			"id":          user.ID,
+			"email":       user.Email,
+			"role":        user.Role,
+			"is_verified": user.IsVerified,
+		},
+	})
+}
+
 func (s *RESTServer) webLogin(c *gin.Context) {
 	type loginReq struct {
 		Email    string `json:"email" binding:"required"`
@@ -132,33 +180,97 @@ func (s *RESTServer) webLogin(c *gin.Context) {
 		return
 	}
 
-	var role string
-	var userID string
-	var name string
-
-	if req.Email == "admin@depin.com" && req.Password == "admin123" {
-		role = "admin"
-		userID = "1"
-		name = "Admin User"
-	} else if req.Email == "user@depin.com" && req.Password == "user123" {
-		role = "researcher"
-		userID = "2"
-		name = "Researcher User"
-	} else {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Geçersiz e-posta veya şifre"})
+	user, err := s.authService.LoginEmailUser(c.Request.Context(), req.Email, req.Password)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
 	}
 
-	token, _ := GenerateToken(userID, role)
+	token, _ := GenerateToken(user.ID, user.Role, user.IsVerified)
 	c.JSON(http.StatusOK, gin.H{
 		"token": token,
 		"user": gin.H{
-			"id":    userID,
-			"email": req.Email,
-			"role":  role,
-			"name":  name,
+			"id":          user.ID,
+			"email":       user.Email,
+			"role":        user.Role,
+			"is_verified": user.IsVerified,
 		},
 	})
+}
+
+func (s *RESTServer) googleLogin(c *gin.Context) {
+	type googleReq struct {
+		IDToken string `json:"id_token" binding:"required"`
+	}
+	var req googleReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	user, err := s.authService.AuthenticateWithGoogle(c.Request.Context(), req.IDToken)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+
+	token, _ := GenerateToken(user.ID, user.Role, user.IsVerified)
+	c.JSON(http.StatusOK, gin.H{
+		"token": token,
+		"user": gin.H{
+			"id":          user.ID,
+			"email":       user.Email,
+			"role":        user.Role,
+			"is_verified": user.IsVerified,
+		},
+	})
+}
+
+func (s *RESTServer) orcidCallback(c *gin.Context) {
+	// MVP: Mock ORCID callback implementation
+	// Real implementation would exchange code for token with ORCID API
+	c.JSON(http.StatusNotImplemented, gin.H{"error": "ORCID integration not fully implemented yet"})
+}
+
+// --- VERIFICATION HANDLERS ---
+func (s *RESTServer) startVerification(c *gin.Context) {
+	userID := c.GetString("userID")
+	err := s.authService.StartVerification(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "Verification started"})
+}
+
+func (s *RESTServer) verificationStatus(c *gin.Context) {
+	userID := c.GetString("userID")
+	// fetch user to check status
+	user, err := s.authService.GetUserDetails(c.Request.Context(), userID)
+	if err != nil || user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"is_verified": user.IsVerified})
+}
+
+func (s *RESTServer) completeVerification(c *gin.Context) {
+	userID := c.GetString("userID")
+	type verifyReq struct {
+		Code string `json:"code" binding:"required"`
+	}
+	var req verifyReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err := s.authService.CompleteVerification(c.Request.Context(), userID, req.Code)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "Verified"})
 }
 
 func (s *RESTServer) abortJob(c *gin.Context) {
@@ -188,7 +300,7 @@ func (s *RESTServer) authWorker(c *gin.Context) {
 		return
 	}
 
-	token, _ := GenerateToken(req.WorkerID, "worker")
+	token, _ := GenerateToken(req.WorkerID, "worker", true)
 	c.JSON(http.StatusOK, gin.H{"token": token})
 }
 

@@ -70,8 +70,12 @@ func main() {
 	}
 
 	// Initialize repositories
+	userRepo := repository.NewUserRepository(dbPool)
 	redisRepo := repository.NewRedisRepository(rdbClient)
 	walletRepo := repository.NewWalletRepository(dbPool)
+	
+	// Initialize Services
+	authService := service.NewAuthService(userRepo)
 
 	// Connect to Validator Service (Rust)
 	validatorConn, err := grpc.NewClient("localhost:50052", grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -107,7 +111,7 @@ func main() {
 	}()
 
 	log.Printf("Starting REST API Gateway on port %s...", cfg.Port)
-	restServer := api.NewRESTServer(walletRepo, jobPublisher, rdbClient)
+	restServer := api.NewRESTServer(walletRepo, jobPublisher, rdbClient, authService)
 	
 	// Expose a raw health check for Docker, or we can just let it run.
 	if err := restServer.Run(":" + cfg.Port); err != nil {

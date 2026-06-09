@@ -50,16 +50,55 @@ func AuthMiddleware(requiredRole string) gin.HandlerFunc {
 
 		c.Set("userID", claims["sub"])
 		c.Set("role", role)
+		
+		isVerified, _ := claims["is_verified"].(bool)
+		c.Set("is_verified", isVerified)
+		
+		c.Next()
+	}
+}
+
+// VerifiedMiddleware checks if the user is verified
+func VerifiedMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		isVerified := c.GetBool("is_verified")
+		if !isVerified {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Account not verified. Please complete the verification process."})
+			return
+		}
 		c.Next()
 	}
 }
 
 // GenerateToken creates a JWT for a user/worker
-func GenerateToken(subject string, role string) (string, error) {
+func GenerateToken(subject string, role string, isVerified bool) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":  subject,
-		"role": role,
-		"exp":  time.Now().Add(24 * time.Hour).Unix(),
+		"sub":         subject,
+		"role":        role,
+		"is_verified": isVerified,
+		"exp":         time.Now().Add(24 * time.Hour).Unix(),
 	})
 	return token.SignedString(jwtSecret)
+}
+
+// CORSMiddleware handles CORS requests
+func CORSMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		origin := c.Request.Header.Get("Origin")
+		if origin != "" {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+		} else {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		c.Next()
+	}
 }
