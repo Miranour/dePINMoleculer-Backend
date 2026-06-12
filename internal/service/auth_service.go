@@ -39,7 +39,16 @@ func (s *AuthService) RegisterEmailUser(ctx context.Context, email, password str
 	hashStr := string(hash)
 
 	// Create user
-	return s.userRepo.CreateUser(ctx, email, &hashStr, "email", nil, "researcher")
+	user, err := s.userRepo.CreateUser(ctx, email, &hashStr, "email", nil, "researcher")
+	if err != nil {
+		return nil, err
+	}
+
+	// MVP: E-posta ile kayıt olan kullanıcıları otomatik olarak doğrulanmış kabul et
+	_ = s.userRepo.MarkUserAsVerified(ctx, user.ID)
+	user.IsVerified = true
+
+	return user, nil
 }
 
 // LoginEmailUser authenticates a user with email and password
