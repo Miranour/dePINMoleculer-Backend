@@ -46,6 +46,10 @@ func (s *RESTServer) Run(addr string) error {
 }
 
 func (s *RESTServer) setupRoutes() {
+	s.router.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
 	v1 := s.router.Group("/api/v1")
 
 	// --- WEB AUTH ENDPOINTS ---
