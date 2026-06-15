@@ -466,8 +466,13 @@ func (s *RESTServer) getUserWallet(c *gin.Context) {
 	userID := c.GetString("userID")
 	wallet, err := s.walletRepo.GetUserWallet(c.Request.Context(), userID)
 	if err != nil || wallet == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Wallet not found"})
-		return
+		// Fallback for users created before automatic wallet generation
+		_ = s.walletRepo.EnsureUserWallet(c.Request.Context(), userID)
+		wallet, err = s.walletRepo.GetUserWallet(c.Request.Context(), userID)
+		if err != nil || wallet == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Wallet not found"})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, wallet)
 }
