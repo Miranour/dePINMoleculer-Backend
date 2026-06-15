@@ -18,12 +18,13 @@ import (
 type RESTServer struct {
 	router       *gin.Engine
 	walletRepo   *repository.WalletRepository
+	jobRepo      *repository.JobRepository
 	jobPublisher *service.JobPublisher
 	redisClient  *redis.Client
 	authService  *service.AuthService
 }
 
-func NewRESTServer(walletRepo *repository.WalletRepository, jobPublisher *service.JobPublisher, redisClient *redis.Client, authService *service.AuthService) *RESTServer {
+func NewRESTServer(walletRepo *repository.WalletRepository, jobRepo *repository.JobRepository, jobPublisher *service.JobPublisher, redisClient *redis.Client, authService *service.AuthService) *RESTServer {
 	r := gin.Default()
 	
 	// Add CORS middleware
@@ -32,6 +33,7 @@ func NewRESTServer(walletRepo *repository.WalletRepository, jobPublisher *servic
 	server := &RESTServer{
 		router:       r,
 		walletRepo:   walletRepo,
+		jobRepo:      jobRepo,
 		jobPublisher: jobPublisher,
 		redisClient:  redisClient,
 		authService:  authService,
@@ -59,6 +61,15 @@ func (s *RESTServer) setupRoutes() {
 		webAuth.POST("/login", s.webLogin)
 		webAuth.POST("/google", s.googleLogin)
 		webAuth.POST("/orcid/callback", s.orcidCallback)
+	}
+
+	// --- PROFILE ENDPOINTS ---
+	profile := v1.Group("/profile")
+	profile.Use(AuthMiddleware("researcher"))
+	{
+		profile.GET("", s.getProfile)
+		profile.GET("/wallet", s.getUserWallet)
+		profile.GET("/jobs", s.getUserJobs)
 	}
 
 	// --- VERIFICATION ENDPOINTS ---
@@ -107,7 +118,6 @@ func (s *RESTServer) setupRoutes() {
 	// --- WEBSOCKET ---
 	v1.GET("/ws/jobs/:id/progress", s.wsJobProgress)
 }
-
 // --- RESEARCHER HANDLERS ---
 type createJobRequest struct {
 	SmilesString      string  `json:"smiles_string" binding:"required"`
@@ -130,6 +140,16 @@ func (s *RESTServer) createJob(c *gin.Context) {
 	err := s.walletRepo.BlockUserBalance(c.Request.Context(), userID, req.Cost)
 	if err != nil {
 		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Insufficient balance or user not found"})
+		return
+	}
+
+	// Save job to database
+	// Assuming PDB ID can be derived or left empty for now. Using a generic ID or empty string.
+	// For MVP, we pass empty string as PDB ID if not explicitly provided
+	err = s.jobRepo.CreateJob(c.Request.Context(), jobID, userID, req.SmilesString, req.TargetPdbUrl, "", req.MaxExhaustiveness, req.Cost)
+	if err != nil {
+		// Rollback balance if DB fails (In a real app, this should be in a transaction, but for MVP we will just return error)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save job to database"})
 		return
 	}
 
@@ -411,4 +431,63 @@ func (s *RESTServer) wsJobProgress(c *gin.Context) {
 			break
 		}
 	}
+}
+// --- PROFILE HANDLERS ---
+func (s *RESTServer) getProfile(c *gin.Context) {
+	userID := c.GetString("userID")
+	
+	user, err := s.authService.GetUserDetails(c.Request.Context(), userID)
+	if err != nil || user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	// For MVP, we can just return 0 for stats, or query them if needed. 
+	// To keep it simple, we query total jobs from jobRepo.
+	_, totalJobs, _ := s.jobRepo.GetJobsByUserID(c.Request.Context(), userID, 1, 0)
+
+	c.JSON(http.StatusOK, gin.H{
+		"user": gin.H{
+			"id":            user.ID,
+			"email":         user.Email,
+			"auth_provider": user.AuthProvider,
+			"is_verified":   user.IsVerified,
+			"role":          user.Role,
+		},
+		"stats": gin.H{
+			"total_jobs":     totalJobs,
+			"completed_jobs": 0, // Mock for now, could be added later
+			"total_spent":    0, // Mock for now
+		},
+	})
+}
+
+func (s *RESTServer) getUserWallet(c *gin.Context) {
+	userID := c.GetString("userID")
+	wallet, err := s.walletRepo.GetUserWallet(c.Request.Context(), userID)
+	if err != nil || wallet == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Wallet not found"})
+		return
+	}
+	c.JSON(http.StatusOK, wallet)
+}
+func (s *RESTServer) getUserJobs(c *gin.Context) {
+	userID := c.GetString("userID")
+	
+	// MVP hardcoded pagination values or we could parse from query
+	limit := 10
+	offset := 0
+	
+	jobs, total, err := s.jobRepo.GetJobsByUserID(c.Request.Context(), userID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch jobs"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"jobs":  jobs,
+		"total": total,
+		"page":  1,
+		"limit": limit,
+	})
 }

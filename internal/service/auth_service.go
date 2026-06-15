@@ -13,11 +13,12 @@ import (
 )
 
 type AuthService struct {
-	userRepo *repository.UserRepository
+	userRepo   *repository.UserRepository
+	walletRepo *repository.WalletRepository
 }
 
-func NewAuthService(userRepo *repository.UserRepository) *AuthService {
-	return &AuthService{userRepo: userRepo}
+func NewAuthService(userRepo *repository.UserRepository, walletRepo *repository.WalletRepository) *AuthService {
+	return &AuthService{userRepo: userRepo, walletRepo: walletRepo}
 }
 
 // RegisterEmailUser registers a new user with email and password
@@ -43,6 +44,9 @@ func (s *AuthService) RegisterEmailUser(ctx context.Context, email, password str
 	if err != nil {
 		return nil, err
 	}
+
+	// Create wallet for the user
+	_ = s.walletRepo.EnsureUserWallet(ctx, user.ID)
 
 	// MVP: E-posta ile kayıt olan kullanıcıları otomatik olarak doğrulanmış kabul et
 	_ = s.userRepo.MarkUserAsVerified(ctx, user.ID)
@@ -107,7 +111,15 @@ func (s *AuthService) AuthenticateWithGoogle(ctx context.Context, tokenStr strin
 	}
 
 	// Create new Google user
-	return s.userRepo.CreateUser(ctx, email, nil, "google", &providerID, "researcher")
+	newUser, err := s.userRepo.CreateUser(ctx, email, nil, "google", &providerID, "researcher")
+	if err != nil {
+		return nil, err
+	}
+
+	// Create wallet for the user
+	_ = s.walletRepo.EnsureUserWallet(ctx, newUser.ID)
+
+	return newUser, nil
 }
 
 // StartVerification is a mock function to initiate the verification process

@@ -330,3 +330,38 @@ func (r *WalletRepository) UpdateWithdrawalStatus(ctx context.Context, id, statu
 
 	return tx.Commit(ctx)
 }
+
+// UserWallet represents user_wallets row
+type UserWallet struct {
+	UserID         string  `json:"user_id"`
+	ActiveBalance  float64 `json:"active_balance"`
+	BlockedBalance float64 `json:"blocked_balance"`
+}
+
+// GetUserWallet retrieves a user's wallet
+func (r *WalletRepository) GetUserWallet(ctx context.Context, userID string) (*UserWallet, error) {
+	var w UserWallet
+	err := r.pool.QueryRow(ctx,
+		"SELECT user_id, active_balance, blocked_balance FROM user_wallets WHERE user_id = $1",
+		userID,
+	).Scan(&w.UserID, &w.ActiveBalance, &w.BlockedBalance)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil // Wallet not found, which shouldn't happen if EnsureUserWallet is called
+		}
+		return nil, err
+	}
+	return &w, nil
+}
+
+// EnsureUserWallet creates a wallet for a user if it doesn't exist
+func (r *WalletRepository) EnsureUserWallet(ctx context.Context, userID string) error {
+	_, err := r.pool.Exec(ctx,
+		"INSERT INTO user_wallets (user_id, active_balance, blocked_balance) VALUES ($1, 0, 0) ON CONFLICT (user_id) DO NOTHING",
+		userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to ensure user wallet: %w", err)
+	}
+	return nil
+}
