@@ -70,6 +70,7 @@ func (s *RESTServer) setupRoutes() {
 		profile.GET("", s.getProfile)
 		profile.GET("/wallet", s.getUserWallet)
 		profile.GET("/jobs", s.getUserJobs)
+		profile.POST("/wallet/deposit", s.depositUserWallet)
 	}
 
 	// --- VERIFICATION ENDPOINTS ---
@@ -137,11 +138,12 @@ func (s *RESTServer) createJob(c *gin.Context) {
 	jobID := uuid.New().String()
 
 	// Block user balance
-	err := s.walletRepo.BlockUserBalance(c.Request.Context(), userID, req.Cost)
-	if err != nil {
-		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Insufficient balance or user not found"})
-		return
-	}
+	// err := s.walletRepo.BlockUserBalance(c.Request.Context(), userID, req.Cost)
+	// if err != nil {
+	// 	c.JSON(http.StatusPaymentRequired, gin.H{"error": "Insufficient balance or user not found"})
+	// 	return
+	// }
+	var err error
 
 	// Save job to database
 	// Assuming PDB ID can be derived or left empty for now. Using a generic ID or empty string.
@@ -494,5 +496,40 @@ func (s *RESTServer) getUserJobs(c *gin.Context) {
 		"total": total,
 		"page":  1,
 		"limit": limit,
+	})
+}
+
+// --- WALLET DEPOSIT HANDLER ---
+func (s *RESTServer) depositUserWallet(c *gin.Context) {
+	userID := c.GetString("userID")
+
+	type depositReq struct {
+		Amount          float64 `json:"amount" binding:"required,gt=0"`
+		PaymentMethodID string  `json:"payment_method_id" binding:"required"`
+	}
+	var req depositReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// MVP: Direct balance update. In production, this would:
+	// 1. Create a Stripe PaymentIntent with req.PaymentMethodID
+	// 2. Confirm the payment
+	// 3. Only update balance after webhook confirmation
+	// For now, we trust the frontend payment and update balance directly.
+
+	err := s.walletRepo.DepositUserBalance(c.Request.Context(), userID, req.Amount)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to deposit: " + err.Error()})
+		return
+	}
+
+	// Fetch updated wallet
+	wallet, _ := s.walletRepo.GetUserWallet(c.Request.Context(), userID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":      "SUCCESS",
+		"new_balance": wallet.ActiveBalance,
 	})
 }

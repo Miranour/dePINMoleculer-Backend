@@ -365,3 +365,35 @@ func (r *WalletRepository) EnsureUserWallet(ctx context.Context, userID string) 
 	}
 	return nil
 }
+
+// DepositUserBalance adds funds to a user's active_balance and creates a ledger entry.
+func (r *WalletRepository) DepositUserBalance(ctx context.Context, userID string, amount float64) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Update active_balance
+	res, err := tx.Exec(ctx,
+		"UPDATE user_wallets SET active_balance = active_balance + $1, updated_at = NOW() WHERE user_id = $2",
+		amount, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update user wallet: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("user wallet not found")
+	}
+
+	// Insert ledger entry for the deposit
+	_, err = tx.Exec(ctx,
+		"INSERT INTO ledger_entries (job_id, amount, type) VALUES ($1, $2, 'DEPOSIT')",
+		"deposit_"+userID, amount,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert deposit ledger entry: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
