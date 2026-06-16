@@ -25,6 +25,10 @@ func NewJobPublisher(rmqConn *amqp.Connection) *JobPublisher {
 // PublishJob enqueues a new molecular simulation job.
 // It applies the "Spot-Check" selection logic (5% chance).
 func (p *JobPublisher) PublishJob(ctx context.Context, jobID string, smiles string, targetPDB string, maxExhaustiveness int32) error {
+	if p.rmqConn == nil {
+		return fmt.Errorf("RabbitMQ connection is nil (failed to connect at startup)")
+	}
+
 	ch, err := p.rmqConn.Channel()
 	if err != nil {
 		return fmt.Errorf("failed to open channel: %w", err)

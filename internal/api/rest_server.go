@@ -151,14 +151,14 @@ func (s *RESTServer) createJob(c *gin.Context) {
 	err = s.jobRepo.CreateJob(c.Request.Context(), jobID, userID, req.SmilesString, req.TargetPdbUrl, "", req.MaxExhaustiveness, req.Cost)
 	if err != nil {
 		// Rollback balance if DB fails (In a real app, this should be in a transaction, but for MVP we will just return error)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save job to database"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save job to database: " + err.Error()})
 		return
 	}
 
 	// Publish job
 	err = s.jobPublisher.PublishJob(c.Request.Context(), jobID, req.SmilesString, req.TargetPdbUrl, req.MaxExhaustiveness)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue job"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue job: " + err.Error()})
 		return
 	}
 
